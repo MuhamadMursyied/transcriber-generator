@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcriber</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230f766e'/><path d='M16 6a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0v-6a4 4 0 0 0-4-4zm-7 10a7 7 0 0 0 6 6.9V26h2v-3.1a7 7 0 0 0 6-6.9h-2a5 5 0 0 1-10 0z' fill='white'/></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 2a3.5 3.5 0 0 0-3.5 3.5v6a3.5 3.5 0 0 0 7 0v-6A3.5 3.5 0 0 0 12 2zM5.5 11.5h-2a8.5 8.5 0 0 0 7.5 8.44V23h2v-3.06a8.5 8.5 0 0 0 7.5-8.44h-2a6.5 6.5 0 0 1-13 0z"/></svg>
+      </span>
+      <div>
+        <h1>Transcriber</h1>
+        <p class="tagline" data-i18n="tagline">Speech to text and summary · Malay, English, mixed</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="device" class="pill" title="Where the model runs"></span>
+      <div class="seg small" role="group" aria-label="Interface language">
+        <button type="button" data-ui-lang="en">EN</button>
+        <button type="button" data-ui-lang="ms">BM</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Step 1: choose file and options -->
+    <section class="card" id="setup">
+      <label id="dropzone" class="dropzone" for="file-input">
+        <input id="file-input" type="file" multiple
+               accept="audio/*,video/*,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac,.wma,.amr,.mp4,.mkv,.mov,.avi,.webm,.3gp,.mpeg">
+        <svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path fill="currentColor" d="M11 16V7.8l-3.6 3.6L6 10l6-6 6 6-1.4 1.4L13 7.8V16zm-7 4v-5h2v3h12v-3h2v5z"/></svg>
+        <strong data-i18n="drop">Drop audio or video files here</strong>
+        <span data-i18n="dropHint">or click to choose · MP3, WAV, M4A, MP4, MKV, MOV, WEBM and more</span>
+        <span id="picked" class="picked"></span>
+      </label>
+
+      <div class="options">
+        <div class="field">
+          <span class="label" data-i18n="language">Language spoken</span>
+          <div class="seg" id="language" role="group"></div>
+        </div>
+
+        <div class="field">
+          <span class="label" data-i18n="speed">Speed</span>
+          <div class="seg" id="quality" role="group">
+            <button type="button" data-value="fast" data-i18n="fast">Fast</button>
+            <button type="button" data-value="accurate" data-i18n="accurate">Accurate</button>
+          </div>
+        </div>
+
+        <div class="field wide">
+          <label class="label" for="model" data-i18n="model">Model</label>
+          <select id="model"></select>
+          <span class="hint" id="model-note"></span>
+        </div>
+
+        <div class="field wide">
+          <label class="label" for="vocabulary" data-i18n="vocab">Special words (optional)</label>
+          <input id="vocabulary" type="text" maxlength="500"
+                 data-i18n-placeholder="vocabPlaceholder"
+                 placeholder="Names or terms to spell correctly, e.g. UMPSA, ROS 2, Encik Hafiz">
+        </div>
+      </div>
+
+      <div class="start-row">
+        <button id="start" class="primary" type="button" disabled data-i18n="start">Transcribe</button>
+        <span class="hint" data-i18n="privacy">Runs on this computer. Your recordings never leave it.</span>
+      </div>
+      <p id="setup-error" class="error" hidden></p>
+    </section>
+
+    <!-- Files in this session -->
+    <nav id="job-list" class="job-list" hidden></nav>
+
+    <!-- Step 2: results -->
+    <section id="result" class="card result" hidden>
+      <div class="result-head">
+        <div>
+          <h2 id="result-title"></h2>
+          <p id="result-meta" class="hint"></p>
+        </div>
+        <button id="cancel" type="button" class="ghost" data-i18n="cancel">Cancel</button>
+      </div>
+
+      <div id="progress-box" class="progress-box">
+        <div class="progress"><div id="progress-bar"></div></div>
+        <div class="progress-text"><span id="stage"></span><span id="percent"></span></div>
+      </div>
+      <p id="job-error" class="error" hidden></p>
+
+      <div id="player"></div>
+
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="transcript" class="active" data-i18n="transcript">Transcript</button>
+        <button type="button" role="tab" data-tab="summary" data-i18n="summary">Summary</button>
+      </div>
+
+      <div id="tab-transcript" class="tab-panel">
+        <div class="toolbar">
+          <input id="search" type="search" data-i18n-placeholder="search" placeholder="Search transcript">
+          <label class="check"><input id="show-times" type="checkbox" checked> <span data-i18n="times">Timestamps</span></label>
+          <label class="check"><input id="follow" type="checkbox" checked> <span data-i18n="follow">Follow audio</span></label>
+          <span class="spacer"></span>
+          <button id="copy" type="button" class="ghost" data-i18n="copy">Copy text</button>
+        </div>
+        <p class="hint edit-hint" id="edit-hint" hidden data-i18n="editHint">Click any line to fix a word. Exports include your edits.</p>
+        <div id="segments" class="segments" aria-live="polite"></div>
+      </div>
+
+      <div id="tab-summary" class="tab-panel" hidden>
+        <div class="summary-block">
+          <h3 data-i18n="quickTitle">Quick summary</h3>
+          <p class="hint" data-i18n="quickHint">The most important sentences, picked instantly without an AI model. Click a time to listen.</p>
+          <div id="keywords" class="chips"></div>
+          <ol id="key-points" class="key-points"></ol>
+        </div>
+
+        <div class="summary-block">
+          <h3 data-i18n="aiTitle">AI summary</h3>
+          <div id="ai-ready" hidden>
+            <p class="hint" data-i18n="aiHint">Written by a free local AI model through Ollama. Takes a little longer.</p>
+            <div class="ai-row">
+              <select id="ai-model" aria-label="Ollama model"></select>
+              <select id="ai-language" aria-label="Summary language">
+                <option value="same" data-i18n="sameLang">Same as recording</option>
+                <option value="ms">Bahasa Melayu</option>
+                <option value="en">English</option>
+              </select>
+              <button id="ai-start" type="button" class="primary" data-i18n="aiStart">Write summary</button>
+            </div>
+            <p id="ai-stage" class="hint"></p>
+            <div id="ai-output" class="ai-output"></div>
+          </div>
+          <div id="ai-missing" class="notice" hidden>
+            <p data-i18n="aiMissing">For a written summary, install Ollama (free) and one small model, then reload this page:</p>
+            <pre><code>curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5:3b</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="downloads">
+        <span class="label" data-i18n="download">Download</span>
+        <a data-format="docx" class="btn">Word (.docx)</a>
+        <a data-format="txt" class="btn">Text (.txt)</a>
+        <a data-format="timestamps.txt" class="btn" data-i18n="txtTimes">Text + times</a>
+        <a data-format="srt" class="btn" data-i18n="srt">Subtitles (.srt)</a>
+        <a data-format="vtt" class="btn">WebVTT (.vtt)</a>
+        <a data-format="json" class="btn">JSON</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span data-i18n="footer">Powered by faster-whisper. Free and open source.</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
