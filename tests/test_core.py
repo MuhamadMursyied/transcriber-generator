@@ -71,6 +71,34 @@ class SummaryTests(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(summary.quick_summary([]), {"key_points": [], "keywords": []})
 
+    def test_ai_summary_single_pass(self):
+        prompts = []
+
+        def generate(prompt, on_text):
+            prompts.append(prompt)
+            return "## Ringkasan\nOk."
+
+        out = summary.ai_summary("Robot UGV diuji di ladang.", generate, "ms")
+        self.assertEqual(out, "## Ringkasan\nOk.")
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("## Perkara utama", prompts[0])
+        self.assertIn("Bahasa Melayu", prompts[0])
+
+    def test_ai_summary_map_reduce_for_long_text(self):
+        prompts = []
+
+        def generate(prompt, on_text):
+            prompts.append(prompt)
+            return f"- note {len(prompts)}"
+
+        text = " ".join(["perkataan"] * 3000)  # ~30k characters -> several parts
+        summary.ai_summary(text, generate, "en")
+        self.assertGreater(len(prompts), 2)
+        self.assertIn("part 1 of", prompts[0])
+        self.assertIn("NOTES FROM EACH PART", prompts[-1])
+        self.assertIn("- note 1", prompts[-1])
+        self.assertIn("## Action items", prompts[-1])
+
     def test_chunks_cover_all_words(self):
         text = " ".join(f"w{i}" for i in range(5000))
         parts = list(summary._chunks(text, size=1000))

@@ -3,7 +3,8 @@
 Examples:
   python cli.py meeting.mp4
   python cli.py lecture.m4a --model large-v3-turbo --language ms --format txt,srt,docx
-  python cli.py *.mp3 --out transcripts/ --ollama qwen2.5:3b
+  python cli.py meeting.mp4 --summary                  # + AI summary (built-in model)
+  python cli.py *.mp3 --out transcripts/ --ollama qwen2.5:7b
 """
 
 import argparse
@@ -11,7 +12,7 @@ import os
 import sys
 import time
 
-from stt import engine, export, summary
+from stt import engine, export, llm, summary
 from stt.models import ModelCache, list_models
 
 
@@ -26,8 +27,13 @@ def main():
     parser.add_argument("--format", default="txt,srt,docx",
                         help="comma list of: " + ", ".join(export.FORMATS))
     parser.add_argument("--out", default=None, help="output folder (default: next to input)")
+    parser.add_argument("--summary", nargs="?", const=llm.DEFAULT_LLM, default=None,
+                        choices=list(llm.LLMS),
+                        help=f"also write an AI summary with a built-in model "
+                             f"(default {llm.DEFAULT_LLM})")
+    parser.add_argument("--summary-language", default="auto", choices=["auto", "ms", "en"])
     parser.add_argument("--ollama", default=None, metavar="MODEL",
-                        help="also write an AI summary with this Ollama model")
+                        help="write the AI summary with this Ollama model instead")
     args = parser.parse_args()
 
     formats = [f.strip() for f in args.format.split(",") if f.strip()]
@@ -38,6 +44,7 @@ def main():
     models = ModelCache()
     print(f"Loading model '{args.model}' on {models.device} ({models.compute_type})...")
     model = models.get(args.model)
+    local_llm = llm.LocalLLM()  # loads the summary model only if --summary is used
 
     for path in args.files:
         print(f"\n== {path}")
@@ -62,10 +69,19 @@ def main():
               f"({duration / max(elapsed, 0.01):.1f}x real time), language: {info.language}")
 
         summary_data = summary.quick_summary(segments)
-        if args.ollama:
-            print(f"Summarising with {args.ollama}...")
+        if args.summary or args.ollama:
             text = " ".join(s["text"] for s in segments)
-            summary_data["ai"] = summary.ollama_summary(text, args.ollama)
+            language = args.summary_language
+            if language == "auto":
+                language = "en" if info.language == "en" else "ms"
+            if args.ollama:
+                def generate(prompt, _on_text):
+                    return summary.ollama_generate(args.ollama, prompt)
+            else:
+                def generate(prompt, _on_text):
+                    return local_llm.generate(args.summary, prompt, on_progress=print)
+            print("Writing AI summary...")
+            summary_data["ai"] = summary.ai_summary(text, generate, language, on_progress=print)
             print(summary_data["ai"])
 
         base_name = os.path.splitext(os.path.basename(path))[0]

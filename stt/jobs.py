@@ -11,6 +11,7 @@ import time
 import uuid
 
 from . import engine, summary
+from .llm import LocalLLM
 from .models import ModelCache
 
 MAX_JOBS_KEPT = 20
@@ -94,9 +95,10 @@ def _duration_text(seconds):
 
 
 class JobManager:
-    def __init__(self, models=None, transcribe_fn=None, load_audio_fn=None):
-        # The *_fn arguments let tests swap in a fake engine.
+    def __init__(self, models=None, transcribe_fn=None, load_audio_fn=None, llm=None):
+        # The arguments let tests swap in a fake speech engine and summariser.
         self.models = models or ModelCache()
+        self.llm = llm or LocalLLM()
         self.transcribe_fn = transcribe_fn or engine.transcribe
         self.load_audio_fn = load_audio_fn or engine.load_audio
         self.jobs = {}
@@ -174,22 +176,44 @@ class JobManager:
         job.quick_summary = summary.quick_summary(job.segments)
         job.progress = 1.0
         job.elapsed = time.time() - started
+        # Write the AI summary straight away when asked. It runs here, in the
+        # worker, so it never competes with the next file for the CPU.
+        auto_summary = bool(opts.get("summary_model") and job.segments)
+        if auto_summary:
+            job.ai_status, job.ai_stage = "working", "Starting"
         job.status, job.stage = "done", "Done"
+        if auto_summary:
+            self._summarise(job, opts["summary_model"], opts.get("summary_language", "auto"))
 
     def start_ai_summary(self, job, model, language):
+        """Run (or re-run) the AI summary in the background."""
         if job.ai_status == "working":
             return
         job.ai_status, job.ai_stage, job.ai_summary = "working", "Starting", None
+        threading.Thread(target=self._summarise, args=(job, model, language), daemon=True).start()
 
-        def run():
-            def on_progress(stage):
-                job.ai_stage = stage
+    def _summarise(self, job, model, language):
+        """model is "builtin:<id>" or "ollama:<name>"."""
+        if language not in ("ms", "en"):
+            language = "en" if job.language == "en" else "ms"
+        backend, _, name = model.partition(":")
 
-            try:
-                text = " ".join(s["text"] for s in job.segments)
-                job.ai_summary = summary.ollama_summary(text, model, language, on_progress)
-                job.ai_status, job.ai_stage = "done", "Done"
-            except Exception as error:
-                job.ai_status, job.ai_stage = "error", f"Ollama failed: {error}"
+        def on_progress(stage):
+            job.ai_stage = stage
 
-        threading.Thread(target=run, daemon=True).start()
+        def on_text(partial):
+            job.ai_summary = partial
+
+        if backend == "ollama":
+            def generate(prompt, _on_text):
+                return summary.ollama_generate(name, prompt)
+        else:
+            def generate(prompt, stream):
+                return self.llm.generate(name, prompt, on_progress, stream)
+
+        try:
+            text = " ".join(s["text"] for s in job.segments)
+            job.ai_summary = summary.ai_summary(text, generate, language, on_progress, on_text)
+            job.ai_status, job.ai_stage = "done", "Done"
+        except Exception as error:
+            job.ai_status, job.ai_stage = "error", f"Summary failed: {error}"

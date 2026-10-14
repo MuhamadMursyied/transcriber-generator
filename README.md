@@ -15,9 +15,8 @@ It runs on your own computer with free, open models ([faster-whisper](https://gi
 - **Live transcript**: text appears while it is still being transcribed, with a progress bar and time left.
 - **Click a timestamp to play from there**, and the player highlights the line being spoken. You can search the transcript and edit any line to fix a word; downloads include your edits.
 - **Special words**: type names or terms such as "UMPSA, ROS 2, Encik Hafiz" so they are spelled correctly.
-- **Two kinds of summary**:
-  - *Quick summary*: the key sentences and keywords, picked instantly with no AI model. Click a time to listen.
-  - *AI summary*: a written summary with key points and action items from a free local LLM through [Ollama](https://ollama.com), in Malay, English, or the recording's own mix.
+- **AI summary out of the box**: as soon as the transcript is ready, a built-in AI model (Qwen2.5, free, runs on your computer) writes a summary with key points and action items, in Bahasa Melayu or English. You watch it being written, and you can rewrite it with another model or language. No Ollama or API key is needed.
+- **Key sentences**: the most important sentences and keywords, picked instantly. Click a time to listen.
 - **Downloads**: Word (.docx, with the summary), plain text, text with timestamps, SRT and WebVTT subtitles, and JSON.
 - **Several files at once**: queue as many as you like and switch between them.
 - English or Bahasa Melayu interface, light and dark mode, works on a phone.
@@ -89,16 +88,18 @@ Rules of thumb:
 | English | Forces English. |
 | Auto | Detects one language from the first 30 seconds. |
 
-## AI summary with Ollama (optional)
+## AI summary
 
-The quick summary always works. For a written summary, install Ollama and one small model:
+The summary is written by a small instruction-tuned model, run with CTranslate2 (the same engine faster-whisper uses), so no extra packages are needed. Pick it under **AI summary** before you transcribe, or later on the Summary tab.
 
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5:3b        # about 2 GB, handles Malay well
-```
+| Model | Download | Notes |
+|---|---|---|
+| **Qwen2.5 3B** | 3.1 GB | Default. Better summaries, good Malay. Needs about 4 GB of free RAM. |
+| Qwen2.5 1.5B | 1.5 GB | About twice as fast, with simpler summaries. |
 
-Reload the page, and the Summary tab lets you pick the model and the output language. Long recordings are summarised in parts first, then combined. Larger models (`qwen2.5:7b`, `llama3.1:8b`) write better summaries if you have the RAM or VRAM.
+The model downloads once on first use, then it works offline. The summary language follows the recording (Malay or mixed gives Malay, English gives English), or you can choose one. Long recordings are read in parts first, then the notes are combined, so any length works.
+
+Already run [Ollama](https://ollama.com)? Its models show up in the same list (for example `qwen2.5:7b` for even better summaries).
 
 ## Command line
 
@@ -106,7 +107,8 @@ Reload the page, and the Summary tab lets you pick the model and the output lang
 source .venv/bin/activate
 python cli.py meeting.mp4                                  # writes meeting.txt, .srt, .docx
 python cli.py ceramah.m4a --model medium --language ms --format txt,docx
-python cli.py recordings/*.mp3 --out transcripts/ --ollama qwen2.5:3b
+python cli.py meeting.mp4 --summary                        # + AI summary in the .docx
+python cli.py recordings/*.mp3 --out transcripts/ --summary qwen2.5-1.5b
 python cli.py --help
 ```
 
@@ -125,14 +127,14 @@ browser (static/)                Flask (app.py)                 worker thread (s
  click time → seek player                                         faster-whisper: VAD + batched decoding
  edit line  ──PUT──▶ update segments                              segments streamed into the job
  download   ──GET──▶ stt/export.py (TXT/SRT/VTT/JSON/DOCX)        quick summary when done
- AI summary ──POST─▶ stt/summary.py ──HTTP──▶ Ollama (local)
+ AI summary ──POST─▶ stt/summary.py ──▶ stt/llm.py (Qwen2.5 on CTranslate2) or Ollama
 ```
 
 Design choices:
 
 - **faster-whisper** (CTranslate2) is up to 4x faster than the original Whisper with the same accuracy and less memory, and it runs int8 on any CPU. It also bundles PyAV, so no system ffmpeg is needed. The `ffmpeg` command is only used as a fallback for rare files.
 - **One worker, one cached model.** Whisper already uses every core or the whole GPU, so files are processed one after another, and the last model stays in memory so the next file starts at once.
-- **Two Python dependencies.** The web server is Flask, the UI is plain HTML/CSS/JS with no build step, Ollama is called with `urllib`, and the .docx is written directly with `zipfile`.
+- **Two Python dependencies.** The web server is Flask, the UI is plain HTML/CSS/JS with no build step, the summary model reuses CTranslate2 and `tokenizers` from faster-whisper, and the .docx is written directly with `zipfile`.
 - The uploaded copy is deleted as soon as transcription finishes. The browser plays your original file locally.
 
 ## Project layout
@@ -145,7 +147,8 @@ stt/
   models.py         model list, GPU detection, model cache
   engine.py         audio decoding, language options, transcription
   jobs.py           background job queue
-  summary.py        quick (extractive) and Ollama summaries
+  summary.py        key sentences and AI summary prompts (map-reduce)
+  llm.py            built-in summary model (Qwen2.5 on CTranslate2)
   export.py         TXT, SRT, VTT, JSON and DOCX writers
 static/             index.html, style.css, app.js
 scripts/            convert_malaysian.sh
@@ -173,4 +176,4 @@ The API tests swap in a fake speech engine, so they run in under a second withou
 
 MIT. See [LICENSE](LICENSE).
 
-Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and OpenAI's [Whisper](https://github.com/openai/whisper) models, with Malaysian models by [Mesolitica](https://huggingface.co/mesolitica) and optional summaries through [Ollama](https://ollama.com).
+Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and OpenAI's [Whisper](https://github.com/openai/whisper) models, with Malaysian models by [Mesolitica](https://huggingface.co/mesolitica) and summaries by [Qwen2.5](https://huggingface.co/Qwen) (CTranslate2 conversions by jncraton).

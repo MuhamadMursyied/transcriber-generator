@@ -13,7 +13,7 @@ import webbrowser
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.utils import secure_filename
 
-from stt import engine, export, summary
+from stt import engine, export, llm, summary
 from stt.jobs import JobManager
 from stt.models import list_models
 
@@ -36,6 +36,31 @@ def downloaded_models():
         elif os.path.isdir(os.path.join(HF_HUB_CACHE, "models--" + repo.replace("/", "--"))):
             found.append(model["id"])
     return found
+
+
+def summary_models():
+    """Built-in summary models first, then anything installed in Ollama."""
+    models = [
+        {
+            "id": "builtin:" + key,
+            "label": info["label"],
+            "size": info["size"],
+            "note": info["note"],
+            "downloaded": llm.is_downloaded(key),
+        }
+        for key, info in llm.LLMS.items()
+    ]
+    for name in summary.ollama_models():
+        models.append({"id": "ollama:" + name, "label": name + " (Ollama)", "size": "",
+                       "note": "Runs in your Ollama install.", "downloaded": True})
+    return models
+
+
+def valid_summary_model(model_id):
+    backend, _, name = model_id.partition(":")
+    if backend == "builtin":
+        return name in llm.LLMS
+    return backend == "ollama" and bool(name)
 
 
 def create_app(manager=None):
@@ -66,7 +91,7 @@ def create_app(manager=None):
             downloaded=downloaded_models(),
             languages=engine.LANGUAGES,
             device=jobs.models.device,
-            ollama_models=summary.ollama_models(),
+            summary_models=summary_models(),
         )
 
     @app.post("/api/jobs")
@@ -80,7 +105,11 @@ def create_app(manager=None):
             "language": request.form.get("language", "mixed"),
             "quality": request.form.get("quality", "fast"),
             "vocabulary": request.form.get("vocabulary", "")[:500],
+            "summary_model": request.form.get("summary_model", ""),
+            "summary_language": request.form.get("summary_language", "auto"),
         }
+        if options["summary_model"] and not valid_summary_model(options["summary_model"]):
+            return jsonify(error="Unknown summary model."), 400
         if options["model"] not in {m["id"] for m in list_models()}:
             return jsonify(error="Unknown model."), 400
         if options["language"] not in engine.LANGUAGES:
@@ -127,9 +156,11 @@ def create_app(manager=None):
         if error:
             return error
         body = request.get_json(silent=True) or {}
-        if not body.get("model"):
-            return jsonify(error="Choose an Ollama model."), 400
-        jobs.start_ai_summary(job, body["model"], body.get("language", "same"))
+        if not valid_summary_model(body.get("model", "")):
+            return jsonify(error="Choose a summary model."), 400
+        if job.status != "done":
+            return jsonify(error="Wait until transcription finishes."), 409
+        jobs.start_ai_summary(job, body["model"], body.get("language", "auto"))
         return jsonify(ok=True)
 
     @app.get("/api/jobs/<job_id>/export/<fmt>")

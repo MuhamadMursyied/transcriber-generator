@@ -27,14 +27,18 @@ const TEXT = {
     copy: "Copy text",
     copied: "Copied!",
     editHint: "Click any line to fix a word. Exports include your edits.",
-    quickTitle: "Quick summary",
-    quickHint: "The most important sentences, picked instantly without an AI model. Click a time to listen.",
+    quickTitle: "Key sentences",
+    quickHint: "The most important sentences, picked instantly. Click a time to listen.",
     aiTitle: "AI summary",
-    aiHint: "Written by a free local AI model through Ollama. Takes a little longer.",
-    sameLang: "Same as recording",
+    aiHint: "Written by a free AI model that runs on this computer. The first time, the model is downloaded once.",
+    sameLang: "Language: auto",
     aiStart: "Write summary",
     aiAgain: "Write again",
-    aiMissing: "For a written summary, install Ollama (free) and one small model, then reload this page:",
+    autoSummary: "AI summary",
+    summaryOff: "Off (transcript only)",
+    autoSummaryNote: "Written automatically after the transcript is ready.",
+    autoSummaryOff: "You can still write one later from the Summary tab.",
+    aiWaiting: "The summary is written when the transcript is ready.",
     download: "Download",
     txtTimes: "Text + times",
     srt: "Subtitles (.srt)",
@@ -75,14 +79,18 @@ const TEXT = {
     copy: "Salin teks",
     copied: "Disalin!",
     editHint: "Klik mana-mana baris untuk betulkan perkataan. Muat turun akan ikut suntingan anda.",
-    quickTitle: "Ringkasan pantas",
-    quickHint: "Ayat paling penting, dipilih serta-merta tanpa model AI. Klik masa untuk dengar.",
+    quickTitle: "Ayat penting",
+    quickHint: "Ayat paling penting, dipilih serta-merta. Klik masa untuk dengar.",
     aiTitle: "Ringkasan AI",
-    aiHint: "Ditulis oleh model AI tempatan percuma melalui Ollama. Ambil masa sedikit.",
-    sameLang: "Sama seperti rakaman",
+    aiHint: "Ditulis oleh model AI percuma yang berjalan di komputer ini. Kali pertama, model dimuat turun sekali sahaja.",
+    sameLang: "Bahasa: auto",
     aiStart: "Tulis ringkasan",
     aiAgain: "Tulis semula",
-    aiMissing: "Untuk ringkasan bertulis, pasang Ollama (percuma) dan satu model kecil, kemudian muat semula halaman ini:",
+    autoSummary: "Ringkasan AI",
+    summaryOff: "Tutup (transkrip sahaja)",
+    autoSummaryNote: "Ditulis secara automatik selepas transkrip siap.",
+    autoSummaryOff: "Anda masih boleh tulis kemudian di tab Ringkasan.",
+    aiWaiting: "Ringkasan akan ditulis selepas transkrip siap.",
     download: "Muat turun",
     txtTimes: "Teks + masa",
     srt: "Sarikata (.srt)",
@@ -117,7 +125,8 @@ const TEXT = {
       "Failed": "Gagal",
       "Cancelled": "Dibatalkan",
       "Starting": "Bermula",
-      "Writing final summary": "Menulis ringkasan akhir",
+      "Writing summary": "Menulis ringkasan",
+      "Loading summary model": "Memuatkan model ringkasan",
     },
   },
 };
@@ -125,7 +134,15 @@ const TEXT = {
 let uiLang = localStorage.getItem("uiLang") || (navigator.language.startsWith("ms") ? "ms" : "en");
 const t = (key) => TEXT[uiLang][key] ?? TEXT.en[key] ?? key;
 const fill = (s, values) => s.replace(/\{(\w+)\}/g, (_, k) => values[k]);
-const stageText = (s) => (s && TEXT[uiLang].stages[s]) || s || "";
+function stageText(s) {
+  if (!s) return "";
+  if (uiLang !== "ms") return s;
+  if (TEXT.ms.stages[s]) return TEXT.ms.stages[s];
+  return s
+    .replace(/^Reading part (\d+) of (\d+)$/, "Membaca bahagian $1 daripada $2")
+    .replace(/^Downloading summary model \((.+), first time only\)$/, "Memuat turun model ringkasan ($1, kali pertama sahaja)")
+    .replace(/^Summary failed: /, "Ringkasan gagal: ");
+}
 
 // --------------------------------------------------------------- state ----
 
@@ -189,6 +206,7 @@ function applyLanguage() {
   if (state.config) {
     renderLanguageButtons();
     renderModels();
+    renderSummaryModels();
     $("#device").textContent = state.config.device === "cuda" ? t("gpu") : t("cpu");
   }
   updateStartButton();
@@ -240,6 +258,30 @@ function renderModels() {
   select.value = state.config.models.some((m) => m.id === current) ? current : recommendedModel();
   showModelNote();
 }
+
+function renderSummaryModels() {
+  const models = state.config.summary_models;
+  const label = (m) => [m.label, m.size, m.downloaded ? "✓ " + t("downloaded") : ""].filter(Boolean).join("  ·  ");
+
+  const auto = $("#auto-summary");
+  const autoValue = auto.value || localStorage.getItem("autoSummary") || models[0]?.id || "";
+  auto.innerHTML = "";
+  auto.append(new Option(t("summaryOff"), ""));
+  for (const m of models) auto.append(new Option(label(m), m.id));
+  auto.value = autoValue === "" || models.some((m) => m.id === autoValue) ? autoValue : models[0]?.id || "";
+  $("#auto-summary-note").textContent = auto.value ? t("autoSummaryNote") : t("autoSummaryOff");
+
+  const manual = $("#ai-model");
+  const manualValue = manual.value || auto.value || models[0]?.id;
+  manual.innerHTML = "";
+  for (const m of models) manual.append(new Option(label(m), m.id));
+  if (models.some((m) => m.id === manualValue)) manual.value = manualValue;
+}
+
+$("#auto-summary").addEventListener("change", () => {
+  localStorage.setItem("autoSummary", $("#auto-summary").value);
+  renderSummaryModels();
+});
 
 function showModelNote() {
   const m = state.config.models.find((x) => x.id === $("#model").value);
@@ -307,6 +349,7 @@ $("#start").addEventListener("click", async () => {
     form.append("language", state.language);
     form.append("quality", state.quality);
     form.append("vocabulary", $("#vocabulary").value);
+    form.append("summary_model", $("#auto-summary").value);
     try {
       const { id } = await api("/api/jobs", { method: "POST", body: form });
       state.jobs.push({ id, file, url: URL.createObjectURL(file), data: null, segments: [] });
@@ -583,17 +626,20 @@ function renderSummary(job) {
     }
   }
 
-  // AI summary (Ollama).
-  const hasOllama = state.config?.ollama_models.length > 0;
-  $("#ai-ready").hidden = !hasOllama;
-  $("#ai-missing").hidden = hasOllama;
-  if (!hasOllama) return;
+  // AI summary.
   const done = job.data?.status === "done";
   const aiStatus = job.data?.ai_status;
-  $("#ai-start").disabled = !done || aiStatus === "working";
+  const working = aiStatus === "working";
+  $("#ai-start").disabled = !done || working;
   $("#ai-start").textContent = aiStatus === "done" ? t("aiAgain") : t("aiStart");
-  $("#ai-stage").textContent = aiStatus === "working" || aiStatus === "error" ? stageText(job.data.ai_stage) + (aiStatus === "working" ? "…" : "") : "";
-  $("#ai-output").innerHTML = job.data?.ai_summary ? markdown(job.data.ai_summary) : "";
+  $("#ai-progress").hidden = !working;
+  $("#ai-stage").textContent = working ? stageText(job.data.ai_stage) : "";
+  $("#ai-error").hidden = aiStatus !== "error";
+  $("#ai-error").textContent = aiStatus === "error" ? stageText(job.data.ai_stage) : "";
+  const output = $("#ai-output");
+  output.classList.toggle("writing", working && !!job.data.ai_summary);
+  if (job.data?.ai_summary) output.innerHTML = markdown(job.data.ai_summary);
+  else output.innerHTML = !done && job.data?.options?.summary_model ? `<p class="hint">${escapeHtml(t("aiWaiting"))}</p>` : "";
 }
 
 function markdown(md) {
@@ -618,7 +664,6 @@ function markdown(md) {
 $("#ai-start").addEventListener("click", async () => {
   const job = activeJob();
   if (!job) return;
-  localStorage.setItem("aiModel", $("#ai-model").value);
   try {
     await api(`/api/jobs/${job.id}/summary`, {
       method: "POST",
@@ -627,10 +672,12 @@ $("#ai-start").addEventListener("click", async () => {
     });
     job.data.ai_status = "working";
     job.data.ai_stage = "Starting";
+    job.data.ai_summary = null;
     renderSummary(job);
     poll();
   } catch (err) {
-    $("#ai-stage").textContent = err.message;
+    $("#ai-error").textContent = err.message;
+    $("#ai-error").hidden = false;
   }
 });
 
@@ -644,10 +691,6 @@ async function boot() {
     $("#setup-error").hidden = false;
     return;
   }
-  const aiSelect = $("#ai-model");
-  for (const name of state.config.ollama_models) aiSelect.append(new Option(name, name));
-  const savedAi = localStorage.getItem("aiModel");
-  if (savedAi && state.config.ollama_models.includes(savedAi)) aiSelect.value = savedAi;
   renderQuality();
   applyLanguage();
 }

@@ -32,13 +32,20 @@ def fake_transcribe(model, audio, language, model_id, quality, vocabulary, devic
     return SimpleNamespace(language="ms"), results()
 
 
+class FakeLLM:
+    def generate(self, llm_id, prompt, on_progress=None, on_text=None, max_tokens=800):
+        if on_text:
+            on_text("## Ringkasan")
+        return "## Ringkasan\nUjian robot di ladang sawit."
+
+
 def fake_load_audio(path):
     return np.zeros(16000 * 8, dtype=np.float32)
 
 
 class AppTests(unittest.TestCase):
     def setUp(self):
-        manager = JobManager(FakeModels(), fake_transcribe, fake_load_audio)
+        manager = JobManager(FakeModels(), fake_transcribe, fake_load_audio, FakeLLM())
         self.client = create_app(manager).test_client()
 
     def upload(self, **form):
@@ -48,7 +55,7 @@ class AppTests(unittest.TestCase):
     def wait_done(self, job_id):
         for _ in range(100):
             job = self.client.get(f"/api/jobs/{job_id}").get_json()
-            if job["status"] not in ("queued", "working"):
+            if job["status"] not in ("queued", "working") and job["ai_status"] != "working":
                 return job
             time.sleep(0.05)
         self.fail("job did not finish")
@@ -58,6 +65,7 @@ class AppTests(unittest.TestCase):
         config = self.client.get("/api/config").get_json()
         self.assertIn("small", [m["id"] for m in config["models"]])
         self.assertIn("mixed", config["languages"])
+        self.assertIn("builtin:qwen2.5-3b", [m["id"] for m in config["summary_models"]])
 
     def test_full_flow(self):
         res = self.upload(model="small", language="mixed", quality="fast")
@@ -85,10 +93,27 @@ class AppTests(unittest.TestCase):
         self.assertEqual(docx.status_code, 200)
         self.assertEqual(docx.get_data()[:2], b"PK")
 
+    def test_auto_and_manual_ai_summary(self):
+        job_id = self.upload(summary_model="builtin:qwen2.5-1.5b").get_json()["id"]
+        job = self.wait_done(job_id)
+        self.assertEqual(job["ai_status"], "done")
+        self.assertIn("Ujian robot", job["ai_summary"])
+
+        res = self.client.post(f"/api/jobs/{job_id}/summary", json={"model": "builtin:qwen2.5-3b", "language": "en"})
+        self.assertEqual(res.status_code, 200)
+        job = self.wait_done(job_id)
+        self.assertEqual(job["ai_status"], "done")
+        docx = self.client.get(f"/api/jobs/{job_id}/export/docx").get_data()
+        self.assertEqual(docx[:2], b"PK")
+
+        bad = self.client.post(f"/api/jobs/{job_id}/summary", json={"model": "builtin:nope"})
+        self.assertEqual(bad.status_code, 400)
+
     def test_rejects_bad_input(self):
         self.assertEqual(self.client.post("/api/jobs", data={}).status_code, 400)
         self.assertEqual(self.upload(model="nope").status_code, 400)
         self.assertEqual(self.upload(language="fr").status_code, 400)
+        self.assertEqual(self.upload(summary_model="builtin:nope").status_code, 400)
         self.assertEqual(self.client.get("/api/jobs/missing").status_code, 404)
 
     def test_cancel(self):

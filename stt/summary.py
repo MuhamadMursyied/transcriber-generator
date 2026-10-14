@@ -2,8 +2,9 @@
 
 1. quick_summary: picks the most important sentences (extractive). No model,
    instant, works for Malay, English and mixed speech.
-2. ollama_summary: writes a real summary with a local LLM through Ollama
-   (https://ollama.com), if it is installed. Still free and offline.
+2. ai_summary: writes a real summary (overview, key points, action items)
+   with a small local LLM: the built-in Qwen2.5 model (see llm.py) or, if you
+   have it, any model in Ollama. Free and offline.
 """
 
 import json
@@ -104,52 +105,21 @@ def quick_summary(segments, max_points=None):
     return {"key_points": [sentences[i] for i in chosen], "keywords": keywords}
 
 
-# ---------------------------------------------------------------- Ollama ----
+# ------------------------------------------------------------ AI summary ----
 
-OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-if not OLLAMA_URL.startswith("http"):
-    OLLAMA_URL = "http://" + OLLAMA_URL
-
-# Characters per request. Roughly 3k tokens, which fits the context window of
-# small 3B-8B models while leaving room for the answer.
-CHUNK_CHARS = 10000
+# Characters per request. About 2.5k tokens of mixed Malay/English, which keeps
+# small models fast on a CPU and inside their comfortable context length.
+CHUNK_CHARS = 8000
 
 LANGUAGE_NAMES = {
     "ms": "Bahasa Melayu",
     "en": "English",
-    "same": "the same language as the transcript (Malay, English, or a natural mix)",
 }
 
 HEADINGS = {
     "en": ("Summary", "Key points", "Action items", "None"),
     "ms": ("Ringkasan", "Perkara utama", "Tindakan susulan", "Tiada"),
 }
-
-
-def ollama_models():
-    """Names of models installed in Ollama, or [] when Ollama is not running."""
-    try:
-        with urllib.request.urlopen(OLLAMA_URL + "/api/tags", timeout=1.5) as resp:
-            data = json.load(resp)
-        return sorted(m["name"] for m in data.get("models", []))
-    except (urllib.error.URLError, OSError, ValueError):
-        return []
-
-
-def _ollama_generate(model, prompt):
-    body = json.dumps(
-        {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.2, "num_ctx": 8192},
-        }
-    ).encode()
-    req = urllib.request.Request(
-        OLLAMA_URL + "/api/generate", data=body, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=900) as resp:
-        return json.load(resp)["response"].strip()
 
 
 def _chunks(text, size=CHUNK_CHARS):
@@ -165,43 +135,89 @@ def _chunks(text, size=CHUNK_CHARS):
         yield " ".join(chunk)
 
 
-def ollama_summary(text, model, language="same", on_progress=None):
-    """Summarise with a local LLM. Long transcripts are summarised in parts
-    first, then the part summaries are combined (map-reduce)."""
-    lang = LANGUAGE_NAMES.get(language, LANGUAGE_NAMES["same"])
-    parts = list(_chunks(text))
-
-    if len(parts) > 1:
-        notes = []
-        for i, part in enumerate(parts, 1):
-            if on_progress:
-                on_progress(f"Summarising part {i} of {len(parts)}")
-            notes.append(
-                _ollama_generate(
-                    model,
-                    "Below is part of a recording transcript. It may mix Malay and English. "
-                    "Write concise bullet-point notes of the important facts, decisions, "
-                    f"numbers, names and action items. Write in {lang}.\n\n"
-                    f"TRANSCRIPT PART {i}:\n{part}",
-                )
-            )
-        source = "\n\n".join(notes)
-        source_label = "NOTES FROM EACH PART OF THE RECORDING"
-    else:
-        source = text
-        source_label = "TRANSCRIPT"
-
-    if on_progress:
-        on_progress("Writing final summary")
-    summary, key_points, actions, none = HEADINGS["ms" if language == "ms" else "en"]
-    return _ollama_generate(
-        model,
-        "You summarise recordings such as meetings, lectures and interviews. The text may "
-        f"mix Malay and English. Write the answer in {lang}, in Markdown, using exactly "
-        "these sections:\n"
-        f"## {summary}\nA short paragraph (3-5 sentences).\n"
-        f"## {key_points}\nBullet points of the main points.\n"
-        f"## {actions}\nBullet points of tasks, owners and deadlines, or '{none}'.\n\n"
-        "Only use information from the text. Do not invent details.\n\n"
-        f"{source_label}:\n{source}",
+def final_prompt(source, language, from_notes=False):
+    summary, key_points, actions, none = HEADINGS[language]
+    lang = LANGUAGE_NAMES[language]
+    label = "NOTES FROM EACH PART OF THE RECORDING" if from_notes else "TRANSCRIPT"
+    return (
+        "Summarise this recording (a meeting, lecture, talk or interview). The text may "
+        f"mix Malay and English. Write your whole answer in {lang}, in Markdown, with "
+        "exactly these three sections:\n\n"
+        f"## {summary}\n3 to 5 sentences: what the recording is about and the main outcome.\n\n"
+        f"## {key_points}\n4 to 8 bullet points with the important facts, decisions and numbers.\n\n"
+        f"## {actions}\nBullet points of tasks with who and when if mentioned, "
+        f"or a single bullet '{none}'.\n\n"
+        "Use only information from the text.\n\n"
+        f"{label}:\n{source}"
     )
+
+
+def notes_prompt(part, index, total, language):
+    return (
+        f"This is part {index} of {total} of a recording transcript. It may mix Malay "
+        "and English. Write 3 to 8 short bullet-point notes in "
+        f"{LANGUAGE_NAMES[language]} with the important facts, decisions, numbers, names "
+        "and tasks. Use only information from the text.\n\n"
+        f"TRANSCRIPT PART {index}:\n{part}"
+    )
+
+
+def ai_summary(text, generate, language="ms", on_progress=None, on_text=None):
+    """Write a Markdown summary with any LLM backend.
+
+    generate(prompt, on_text) must return the model's answer. Long transcripts
+    are summarised part by part first, then the notes are combined
+    (map-reduce), so any length fits a small model.
+    """
+    language = language if language in LANGUAGE_NAMES else "ms"
+    parts = list(_chunks(text))
+    if not parts:
+        return ""
+
+    if len(parts) == 1:
+        if on_progress:
+            on_progress("Writing summary")
+        return generate(final_prompt(parts[0], language), on_text)
+
+    notes = []
+    for i, part in enumerate(parts, 1):
+        if on_progress:
+            on_progress(f"Reading part {i} of {len(parts)}")
+        notes.append(generate(notes_prompt(part, i, len(parts), language), None))
+    if on_progress:
+        on_progress("Writing summary")
+    return generate(final_prompt("\n\n".join(notes), language, from_notes=True), on_text)
+
+
+# ---------------------------------------------------------------- Ollama ----
+# Optional: use a bigger model you already run in Ollama (https://ollama.com).
+
+OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+if not OLLAMA_URL.startswith("http"):
+    OLLAMA_URL = "http://" + OLLAMA_URL
+
+
+def ollama_models():
+    """Names of models installed in Ollama, or [] when Ollama is not running."""
+    try:
+        with urllib.request.urlopen(OLLAMA_URL + "/api/tags", timeout=1.5) as resp:
+            data = json.load(resp)
+        return sorted(m["name"] for m in data.get("models", []))
+    except (urllib.error.URLError, OSError, ValueError):
+        return []
+
+
+def ollama_generate(model, prompt):
+    body = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.2, "num_ctx": 8192},
+        }
+    ).encode()
+    req = urllib.request.Request(
+        OLLAMA_URL + "/api/generate", data=body, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=900) as resp:
+        return json.load(resp)["response"].strip()

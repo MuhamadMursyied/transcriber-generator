@@ -65,6 +65,11 @@
                  data-i18n-placeholder="vocabPlaceholder"
                  placeholder="Names or terms to spell correctly, e.g. UMPSA, ROS 2, Encik Hafiz">
         </div>
+        <div class="field wide">
+          <label class="label" for="auto-summary" data-i18n="autoSummary">AI summary</label>
+          <select id="auto-summary"></select>
+          <span class="hint" id="auto-summary-note"></span>
+        </div>
       </div>
 
       <div class="start-row">
@@ -114,33 +119,29 @@
 
       <div id="tab-summary" class="tab-panel" hidden>
         <div class="summary-block">
-          <h3 data-i18n="quickTitle">Quick summary</h3>
-          <p class="hint" data-i18n="quickHint">The most important sentences, picked instantly without an AI model. Click a time to listen.</p>
-          <div id="keywords" class="chips"></div>
-          <ol id="key-points" class="key-points"></ol>
+          <h3 data-i18n="aiTitle">AI summary</h3>
+          <p class="hint" data-i18n="aiHint">Written by a free AI model that runs on this computer. The first time, the model is downloaded once.</p>
+          <div class="ai-row">
+            <select id="ai-model" aria-label="Summary model"></select>
+            <select id="ai-language" aria-label="Summary language">
+              <option value="auto" data-i18n="sameLang">Language: auto</option>
+              <option value="ms">Bahasa Melayu</option>
+              <option value="en">English</option>
+            </select>
+            <button id="ai-start" type="button" class="primary" data-i18n="aiStart">Write summary</button>
+          </div>
+          <div id="ai-progress" class="ai-progress" hidden>
+            <span class="spinner" aria-hidden="true"></span><span id="ai-stage"></span>
+          </div>
+          <p id="ai-error" class="error" hidden></p>
+          <div id="ai-output" class="ai-output"></div>
         </div>
 
         <div class="summary-block">
-          <h3 data-i18n="aiTitle">AI summary</h3>
-          <div id="ai-ready" hidden>
-            <p class="hint" data-i18n="aiHint">Written by a free local AI model through Ollama. Takes a little longer.</p>
-            <div class="ai-row">
-              <select id="ai-model" aria-label="Ollama model"></select>
-              <select id="ai-language" aria-label="Summary language">
-                <option value="same" data-i18n="sameLang">Same as recording</option>
-                <option value="ms">Bahasa Melayu</option>
-                <option value="en">English</option>
-              </select>
-              <button id="ai-start" type="button" class="primary" data-i18n="aiStart">Write summary</button>
-            </div>
-            <p id="ai-stage" class="hint"></p>
-            <div id="ai-output" class="ai-output"></div>
-          </div>
-          <div id="ai-missing" class="notice" hidden>
-            <p data-i18n="aiMissing">For a written summary, install Ollama (free) and one small model, then reload this page:</p>
-            <pre><code>curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5:3b</code></pre>
-          </div>
+          <h3 data-i18n="quickTitle">Key sentences</h3>
+          <p class="hint" data-i18n="quickHint">The most important sentences, picked instantly. Click a time to listen.</p>
+          <div id="keywords" class="chips"></div>
+          <ol id="key-points" class="key-points"></ol>
         </div>
       </div>
 
