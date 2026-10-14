@@ -15,6 +15,10 @@ SEGMENTS = [
 ]
 
 
+FULL_MS = "## Ringkasan\nOk.\n\n## Perkara utama\n- Satu.\n\n## Tindakan susulan\n- Tiada"
+FULL_EN = "## Summary\nOk.\n\n## Key points\n- One.\n\n## Action items\n- Hafiz maps warehouse B."
+
+
 class ExportTests(unittest.TestCase):
     def test_clock(self):
         self.assertEqual(export.clock(3725.5), "01:02:05.500")
@@ -76,25 +80,50 @@ class SummaryTests(unittest.TestCase):
 
         def generate(prompt, on_text):
             prompts.append(prompt)
-            return "## Ringkasan\nOk."
+            return FULL_MS
 
         out = summary.ai_summary("Robot UGV diuji di ladang.", generate, "ms")
-        self.assertEqual(out, "## Ringkasan\nOk.")
+        self.assertEqual(out, FULL_MS)
         self.assertEqual(len(prompts), 1)
         self.assertIn("## Perkara utama", prompts[0])
-        self.assertIn("Bahasa Melayu", prompts[0])
+        # Transcript first, language rule last (small models follow what they read last).
+        self.assertTrue(prompts[0].startswith("TRANSCRIPT:\nRobot UGV"))
+        self.assertTrue(prompts[0].endswith("Tulis seluruh jawapan dalam Bahasa Melayu."))
+
+    def test_ai_summary_adds_missing_section(self):
+        prompts = []
+
+        def generate(prompt, on_text):
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                return "## Ringkasan\nUjian robot.\n\n## Perkara utama\n- Robot diuji."
+            return "- Hafiz uji EKF hari Khamis."
+
+        out = summary.ai_summary("Hafiz akan uji EKF hari Khamis.", generate, "ms")
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("Tindakan susulan", prompts[1])
+        self.assertTrue(out.endswith("## Tindakan susulan\n- Hafiz uji EKF hari Khamis."))
+
+    def test_ai_summary_drops_stray_none(self):
+        answer = FULL_EN.replace("- Hafiz maps warehouse B.", "- Hafiz maps warehouse B.\n- None")
+        out = summary.ai_summary("text", lambda p, cb: answer, "en")
+        self.assertNotIn("- None", out)
+        self.assertIn("- Hafiz maps warehouse B.", out)
+        # A lone "None" (no tasks at all) is kept.
+        lone = FULL_EN.replace("- Hafiz maps warehouse B.", "- None")
+        self.assertIn("- None", summary.ai_summary("text", lambda p, cb: lone, "en"))
 
     def test_ai_summary_map_reduce_for_long_text(self):
         prompts = []
 
         def generate(prompt, on_text):
             prompts.append(prompt)
-            return f"- note {len(prompts)}"
+            return f"- note {len(prompts)}" if prompt.startswith("TRANSCRIPT PART") else FULL_EN
 
         text = " ".join(["perkataan"] * 3000)  # ~30k characters -> several parts
         summary.ai_summary(text, generate, "en")
         self.assertGreater(len(prompts), 2)
-        self.assertIn("part 1 of", prompts[0])
+        self.assertTrue(prompts[0].startswith("TRANSCRIPT PART 1 OF"))
         self.assertIn("NOTES FROM EACH PART", prompts[-1])
         self.assertIn("- note 1", prompts[-1])
         self.assertIn("## Action items", prompts[-1])

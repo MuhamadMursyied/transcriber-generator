@@ -20,7 +20,7 @@ LLMS = {
         "repo": "jncraton/Qwen2.5-1.5B-Instruct-ct2-int8",
         "label": "Qwen2.5 1.5B",
         "size": "1.5 GB",
-        "note": "About twice as fast. Simpler summaries.",
+        "note": "About twice as fast. A rough draft: may miss tasks or slip into English.",
     },
 }
 DEFAULT_LLM = "qwen2.5-3b"

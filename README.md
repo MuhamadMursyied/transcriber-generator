@@ -94,8 +94,8 @@ The summary is written by a small instruction-tuned model, run with CTranslate2 
 
 | Model | Download | Notes |
 |---|---|---|
-| **Qwen2.5 3B** | 3.1 GB | Default. Better summaries, good Malay. Needs about 4 GB of free RAM. |
-| Qwen2.5 1.5B | 1.5 GB | About twice as fast, with simpler summaries. |
+| **Qwen2.5 3B** | 3.1 GB | Default. Follows Malay or English reliably and picks up action items. Needs about 4 GB of free RAM. On a laptop CPU (i7-1265U) a meeting summary takes about 1 to 1.5 minutes. |
+| Qwen2.5 1.5B | 1.5 GB | About twice as fast, but only a rough draft: it can miss tasks or slip into English. |
 
 The model downloads once on first use, then it works offline. The summary language follows the recording (Malay or mixed gives Malay, English gives English), or you can choose one. Long recordings are read in parts first, then the notes are combined, so any length works.
 
